@@ -66,6 +66,7 @@ async def root():
             "health": "/health",
             "docs": "/docs",
             "mcp": "/mcp",
+            "mcp_connect": "/mcp/{token}",
             "generate_bio": "/bio",
             "opener": "/opener", 
             "reply": "/reply",
@@ -91,7 +92,7 @@ async def health():
         "version": "2.0.0"
     }
 
-# NEW: MCP Protocol Endpoints for Puch AI Integration
+# MCP Protocol Endpoints for Puch AI Integration
 @app.get("/mcp")
 async def mcp_info():
     """MCP server information for Puch AI discovery"""
@@ -163,6 +164,30 @@ async def mcp_info():
             "type": "bearer_token",
             "valid_tokens": ["puch2024", "wingman123"]
         }
+    }
+
+@app.get("/mcp/{token}")
+async def mcp_connect_get(token: str):
+    """MCP connection endpoint with token in URL path for Puch AI"""
+    valid_tokens = ["puch2024", "wingman123"]
+    token_valid = token in valid_tokens
+    
+    return {
+        "status": "connected" if token_valid else "authentication_failed",
+        "server": "ai-wingman-mcp",
+        "version": "2.0.0",
+        "token": token,
+        "token_valid": token_valid,
+        "connection_id": f"conn_{int(time.time())}",
+        "capabilities": [
+            "bio_generation",
+            "conversation_analysis", 
+            "screenshot_processing",
+            "safety_checking",
+            "date_planning"
+        ],
+        "tools_available": 8,
+        "message": "AI Wingman MCP server connected successfully!" if token_valid else "Invalid authentication token"
     }
 
 @app.post("/mcp")
