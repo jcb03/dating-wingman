@@ -45,43 +45,50 @@ async def log_requests(request, call_next):
     print(f"{datetime.now()}: {request.method} {request.url.path} - {response.status_code} - {process_time:.2f}s")
     return response
 
-@app.get("/")
-async def root():
-    return {
-        "status": "ok", 
-        "app": APP_NAME,
-        "description": "AI Wingman MCP Server for Puch AI",
-        "version": "2.0.0",
-        "features": [
-            "Bio generation",
-            "Conversation openers",
-            "Reply suggestions", 
-            "Date planning",
-            "Safety checks",
-            "Profile roasting",
-            "Screenshot analysis",
-            "Conversation analysis"
-        ],
-        "endpoints": {
-            "health": "/health",
-            "docs": "/docs",
-            "mcp": "/mcp",
-            "mcp_connect": "/mcp/{token}",
-            "generate_bio": "/bio",
-            "opener": "/opener", 
-            "reply": "/reply",
-            "date_plan": "/date-plan",
-            "red_flag_check": "/safety",
-            "profile_roast": "/roast",
-            "profile_screenshot": "/analyze-profile",
-            "conversation_screenshot": "/analyze-conversation"
-        },
-        "integration": "Ready for Puch AI MCP integration",
-        "deployment": {
-            "platform": "Render",
-            "status": "Production Ready"
+@app.api_route("/", methods=["GET", "POST"])
+async def root_flexible(data: dict = None):
+    """Handle both GET and POST requests to root endpoint"""
+    # If it's a GET request, return the normal info
+    if data is None:
+        return {
+            "status": "ok", 
+            "app": APP_NAME,
+            "description": "AI Wingman MCP Server for Puch AI",
+            "version": "2.0.0",
+            "features": [
+                "Bio generation", "Conversation openers", "Reply suggestions", 
+                "Date planning", "Safety checks", "Profile roasting",
+                "Screenshot analysis", "Conversation analysis"
+            ],
+            "endpoints": {
+                "health": "/health", "docs": "/docs", "mcp": "/mcp",
+                "mcp_connect": "/mcp/{token}", "generate_bio": "/bio",
+                "opener": "/opener", "reply": "/reply", "date_plan": "/date-plan",
+                "red_flag_check": "/safety", "profile_roast": "/roast",
+                "profile_screenshot": "/analyze-profile",
+                "conversation_screenshot": "/analyze-conversation"
+            },
+            "integration": "Ready for Puch AI MCP integration",
+            "deployment": {"platform": "Render", "status": "Production Ready"}
         }
-    }
+    
+    # If it's a POST request, handle MCP authentication
+    else:
+        token = None
+        if data and isinstance(data, dict):
+            token = data.get("token") or data.get("bearer_token") or data.get("auth_token")
+        
+        valid_tokens = ["puch2024", "wingman123"]
+        token_valid = token in valid_tokens if token else False
+        
+        return {
+            "status": "connected" if token_valid else "authentication_required",
+            "server": "ai-wingman-mcp",
+            "version": "2.0.0",
+            "token_valid": token_valid,
+            "connection_id": f"conn_{int(time.time())}",
+            "message": "AI Wingman connected!" if token_valid else "Authentication required"
+        }
 
 @app.get("/health")
 async def health():
