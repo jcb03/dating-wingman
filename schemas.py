@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Union
+import base64
 
 class GenerateBioIn(BaseModel):
     profile_text: str = Field(..., description="User's current bio/prompts/interests")
@@ -34,12 +35,12 @@ class OpenerOut(BaseModel):
 class ReplyIn(BaseModel):
     partner_msg: str
     thread_context: Optional[str] = ""
-    intent: str = "continue"  # continue|flirt|deflect|exit
+    intent: str = "continue"
     tone: str = "wholesome"
 
 class ReplyOption(BaseModel):
     reply: str
-    vibe_level: str  # low|medium|high
+    vibe_level: str
     boundary_safe_variant: str
     rationale: str
 
@@ -90,3 +91,38 @@ class ValidateIn(BaseModel):
 class ValidateOut(BaseModel):
     ok: bool
     user_id: Optional[str] = None
+
+# NEW: Screenshot analysis schemas
+class ScreenshotAnalysisIn(BaseModel):
+    image_data: str = Field(..., description="Base64 encoded image data")
+    analysis_type: str = Field("profile", description="profile|conversation|match")
+    context: Optional[str] = Field("", description="Additional context about the screenshot")
+
+class ExtractedProfileData(BaseModel):
+    name: Optional[str] = None
+    age: Optional[str] = None
+    bio: Optional[str] = None
+    interests: List[str] = []
+    education: Optional[str] = None
+    work: Optional[str] = None
+    location: Optional[str] = None
+    photos_description: Optional[str] = None
+
+class ScreenshotAnalysisOut(BaseModel):
+    extracted_text: str
+    profile_data: Optional[ExtractedProfileData] = None
+    suggested_openers: List[OpenerItem] = []
+    red_flags: List[RedFlagItem] = []
+    analysis_summary: str
+
+class ConversationScreenshotIn(BaseModel):
+    image_data: str = Field(..., description="Base64 encoded conversation screenshot")
+    my_role: str = Field("sender", description="sender|receiver - which messages are mine")
+    context: Optional[str] = Field("", description="Additional context")
+
+class ConversationAnalysisOut(BaseModel):
+    extracted_messages: List[dict]
+    conversation_summary: str
+    suggested_replies: List[ReplyOption]
+    conversation_analysis: str
+    next_step_advice: str

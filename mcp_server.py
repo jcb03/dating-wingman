@@ -8,10 +8,13 @@ from schemas import (
     DatePlanIn, DatePlanOut, DatePlan,
     RedFlagIn, RedFlagOut, RedFlagItem,
     RoastIn, RoastOut,
-    ValidateIn, ValidateOut
+    ValidateIn, ValidateOut,
+    ScreenshotAnalysisIn, ScreenshotAnalysisOut, ExtractedProfileData,
+    ConversationScreenshotIn, ConversationAnalysisOut
 )
-from llm import chat
+from llm import chat, analyze_image_with_text
 from auth import check_bearer
+from image_processor import image_processor
 
 # Create MCP server
 mcp = FastMCP(name="ai-wingman-mcp")
@@ -21,6 +24,245 @@ async def validate_bearer(input: ValidateIn) -> ValidateOut:
     """Validate bearer token for Puch AI authentication"""
     ok = check_bearer(input.bearer_token)
     return ValidateOut(ok=ok, user_id=("puch_user" if ok else None))
+
+@mcp.tool()
+async def analyze_profile_screenshot(input: ScreenshotAnalysisIn) -> ScreenshotAnalysisOut:
+    """Analyze dating profile screenshots and generate responses"""
+    try:
+        # Decode and process image
+        image = image_processor.decode_base64_image(input.image_data)
+        
+        # Method 1: OCR text extraction
+        extracted_text = image_processor.extract_text_from_image(image)
+        
+        # Method 2: AI vision analysis (as backup/enhancement)
+        vision_prompt = f"""
+Analyze this dating profile screenshot. Extract and identify:
+1. Name and age
+2. Bio/description text
+3. Interests and hobbies mentioned
+4. Education and work info
+5. Location
+6. Photo descriptions
+7. Any red flags or concerning content
+
+Context: {input.context}
+
+Provide structured information that can help craft personalized conversation starters.
+"""
+        
+        vision_analysis = await analyze_image_with_text(input.image_data, vision_prompt)
+        
+        # Extract structured profile data
+        profile_data_dict = image_processor.extract_profile_data(extracted_text)
+        profile_data = ExtractedProfileData(**profile_data_dict)
+        
+        # Enhance with vision analysis
+        enhanced_text = f"OCR Text: {extracted_text}\n\nAI Vision Analysis: {vision_analysis}"
+        
+        # Generate conversation openers based on extracted data
+        opener_prompt = f"""
+Based on this dating profile analysis:
+{enhanced_text}
+
+Generate 5 personalized conversation openers that:
+1. Reference something specific from their profile
+2. Are engaging and show genuine interest
+3. Avoid generic "hey" messages
+4. Match a {input.context or 'witty'} tone
+5. Include natural follow-up possibilities
+
+For each opener, provide:
+- The opener text
+- 2 follow-up messages
+- Why this opener works for this specific profile
+"""
+        
+        opener_content = await chat([{"role": "user", "content": opener_prompt}], temperature=0.8)
+        opener_data = _force_json(opener_content)
+        
+        openers = []
+        for o in opener_data.get("openers", [])[:5]:
+            openers.append(OpenerItem(
+                text=o.get("text", ""),
+                follow_ups=(o.get("follow_ups") or [])[:2],
+                rationale=o.get("rationale", "")
+            ))
+        
+        # Check for red flags
+        red_flag_prompt = f"""
+Analyze this dating profile for potential red flags or safety concerns:
+{enhanced_text}
+
+Look for:
+- Controlling language
+- Inappropriate requests
+- Suspicious or inconsistent information
+- Boundary-crossing content
+- Potentially unsafe situations
+
+Provide specific flags with severity levels and boundary statements.
+"""
+        
+        red_flag_content = await chat([{"role": "user", "content": red_flag_prompt}], temperature=0.3)
+        red_flag_data = _force_json(red_flag_content)
+        
+        red_flags = []
+        for rf in red_flag_data.get("items", []):
+            red_flags.append(RedFlagItem(
+                flag=rf.get("flag", ""),
+                severity=rf.get("severity", "low"),
+                why=rf.get("why", ""),
+                boundary_statement=rf.get("boundary_statement", "")
+            ))
+        
+        # Generate analysis summary
+        summary_prompt = f"""
+Provide a brief, helpful summary of this dating profile analysis:
+{enhanced_text}
+
+Include:
+- Key talking points
+- Compatibility indicators
+- Conversation strategy recommendations
+- Overall impression
+"""
+        
+        analysis_summary = await chat([{"role": "user", "content": summary_prompt}], temperature=0.6)
+        
+        return ScreenshotAnalysisOut(
+            extracted_text=enhanced_text,
+            profile_data=profile_data,
+            suggested_openers=openers,
+            red_flags=red_flags,
+            analysis_summary=analysis_summary
+        )
+        
+    except Exception as e:
+        # Return error information
+        return ScreenshotAnalysisOut(
+            extracted_text=f"Error processing image: {str(e)}",
+            profile_data=None,
+            suggested_openers=[],
+            red_flags=[],
+            analysis_summary="Unable to analyze image. Please ensure image is clear and contains a dating profile."
+        )
+
+@mcp.tool()
+async def analyze_conversation_screenshot(input: ConversationScreenshotIn) -> ConversationAnalysisOut:
+    """Analyze conversation screenshots and suggest replies"""
+    try:
+        # Decode image
+        image = image_processor.decode_base64_image(input.image_data)
+        
+        # Extract conversation text
+        extracted_text = image_processor.extract_text_from_image(image)
+        
+        # AI vision analysis for conversation context
+        vision_prompt = f"""
+Analyze this conversation screenshot. Extract:
+1. All messages in chronological order
+2. Who sent each message (if distinguishable)
+3. Timestamps if visible
+4. Conversation context and mood
+5. Last message that needs a response
+
+My role in conversation: {input.my_role}
+Additional context: {input.context}
+
+Provide the conversation flow and identify what type of response would be most appropriate.
+"""
+        
+        vision_analysis = await analyze_image_with_text(input.image_data, vision_prompt)
+        
+        # Parse messages (simplified - could be enhanced)
+        messages = []
+        lines = extracted_text.split('\n')
+        for line in lines:
+            if line.strip():
+                messages.append({"text": line.strip(), "sender": "unknown"})
+        
+        # Generate reply suggestions
+        last_message = messages[-1]["text"] if messages else extracted_text
+        
+        reply_prompt = f"""
+Based on this conversation:
+{vision_analysis}
+
+Last message to respond to: "{last_message}"
+
+Generate 3 thoughtful reply options:
+1. Low-key/safe response
+2. Medium engagement response  
+3. Higher energy/flirty response (if appropriate)
+
+Each reply should:
+- Feel natural and conversational
+- Match the conversation tone
+- Move the conversation forward
+- Include a boundary-safe alternative
+- Have clear rationale for why it works
+
+Context: {input.context}
+"""
+        
+        reply_content = await chat([{"role": "user", "content": reply_prompt}], temperature=0.7)
+        reply_data = _force_json(reply_content)
+        
+        replies = []
+        for r in reply_data.get("options", [])[:3]:
+            replies.append(ReplyOption(
+                reply=r.get("reply", ""),
+                vibe_level=r.get("vibe_level", "low"),
+                boundary_safe_variant=r.get("boundary_safe_variant", ""),
+                rationale=r.get("rationale", "")
+            ))
+        
+        # Conversation analysis
+        analysis_prompt = f"""
+Analyze this conversation for:
+1. Overall tone and mood
+2. Interest level from both parties
+3. Conversation momentum
+4. Potential red flags or concerns
+5. Relationship stage/progression
+
+Conversation: {vision_analysis}
+"""
+        
+        conversation_analysis = await chat([{"role": "user", "content": analysis_prompt}], temperature=0.5)
+        
+        # Next step advice
+        next_step_prompt = f"""
+Based on this conversation analysis, what should be the next strategic move?
+Consider:
+- Asking them out
+- Continuing text conversation
+- Sharing contact info
+- Setting boundaries
+- Moving to different topic
+
+Conversation context: {vision_analysis}
+"""
+        
+        next_step_advice = await chat([{"role": "user", "content": next_step_prompt}], temperature=0.6)
+        
+        return ConversationAnalysisOut(
+            extracted_messages=messages,
+            conversation_summary=vision_analysis,
+            suggested_replies=replies,
+            conversation_analysis=conversation_analysis,
+            next_step_advice=next_step_advice
+        )
+        
+    except Exception as e:
+        return ConversationAnalysisOut(
+            extracted_messages=[],
+            conversation_summary=f"Error analyzing conversation: {str(e)}",
+            suggested_replies=[],
+            conversation_analysis="Unable to analyze conversation screenshot.",
+            next_step_advice="Please try uploading a clearer image."
+        )
 
 @mcp.tool()
 async def generate_bio(input: GenerateBioIn) -> GenerateBioOut:
@@ -43,7 +285,7 @@ Return strict JSON {{ "suggestions": [...] }}.
             text=s.get("text", ""),
             why_it_works=s.get("why_it_works", ""),
             dos=(s.get("dos") or [])[:3],
-            donts=(s.get("donts") or [])[:3],
+            donts=(s.get("donts") or [])[:3]  # ✅ FIXED: Added closing bracket
         ))
     return GenerateBioOut(suggestions=items)
 
@@ -138,7 +380,7 @@ Return strict JSON {{ "plans": [...] }}.
             steps=(p.get("steps") or [])[:5],
             opener_line=p.get("opener_line", ""),
             rain_plan=p.get("rain_plan"),
-            booking_tips=(p.get("booking_tips") or [])[:3],
+            booking_tips=(p.get("booking_tips") or [])[:3]  # ✅ FIXED: Added closing bracket
         ))
     return DatePlanOut(plans=plans)
 
@@ -165,7 +407,7 @@ Return strict JSON {{ "items": [...] }}.
             flag=i.get("flag", ""),
             severity=i.get("severity", "low"),
             why=i.get("why", ""),
-            boundary_statement=i.get("boundary_statement", ""),
+            boundary_statement=i.get("boundary_statement", "")
         ))
     return RedFlagOut(items=items)
 
@@ -191,7 +433,7 @@ Return strict JSON with keys: roast, reorder_advice, quick_fixes.
     return RoastOut(
         roast=data.get("roast", ""),
         reorder_advice=(data.get("reorder_advice") or [])[:5],
-        quick_fixes=(data.get("quick_fixes") or [])[:5],
+        quick_fixes=(data.get("quick_fixes") or [])[:5]
     )
 
 def _force_json(content: str) -> Dict[str, Any]:
@@ -218,4 +460,55 @@ def _force_json(content: str) -> Dict[str, Any]:
 
 def get_mcp_app():
     """Get the MCP app for mounting in FastAPI"""
-    return mcp.run()
+    from fastapi import FastAPI
+    
+    # Create a FastAPI app that wraps the MCP tools
+    mcp_app = FastAPI(title="MCP Tools")
+    
+    # Add a simple endpoint to verify MCP is working
+    @mcp_app.get("/")
+    async def mcp_root():
+        return {
+            "status": "MCP server running",
+            "tools": [
+                "generate_bio", "opener", "reply", 
+                "date_plan", "red_flag_check", "profile_roast",
+                "analyze_profile_screenshot", "analyze_conversation_screenshot"
+            ]
+        }
+    
+    # Add individual tool endpoints
+    @mcp_app.post("/tools/generate_bio")
+    async def bio_endpoint(input: GenerateBioIn):
+        return await generate_bio(input)
+    
+    @mcp_app.post("/tools/opener")
+    async def opener_endpoint(input: OpenerIn):
+        return await opener(input)
+        
+    @mcp_app.post("/tools/reply")
+    async def reply_endpoint(input: ReplyIn):
+        return await reply(input)
+        
+    @mcp_app.post("/tools/date_plan")
+    async def date_plan_endpoint(input: DatePlanIn):
+        return await date_plan(input)
+        
+    @mcp_app.post("/tools/red_flag_check")
+    async def red_flag_endpoint(input: RedFlagIn):
+        return await red_flag_check(input)
+        
+    @mcp_app.post("/tools/profile_roast")
+    async def roast_endpoint(input: RoastIn):
+        return await profile_roast(input)
+    
+    # NEW: Screenshot analysis endpoints
+    @mcp_app.post("/tools/analyze_profile_screenshot")
+    async def profile_screenshot_endpoint(input: ScreenshotAnalysisIn):
+        return await analyze_profile_screenshot(input)
+    
+    @mcp_app.post("/tools/analyze_conversation_screenshot")
+    async def conversation_screenshot_endpoint(input: ConversationScreenshotIn):
+        return await analyze_conversation_screenshot(input)
+    
+    return mcp_app
