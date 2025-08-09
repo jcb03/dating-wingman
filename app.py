@@ -1,4 +1,5 @@
 import os
+import urllib.parse
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -173,17 +174,26 @@ async def mcp_info():
         }
     }
 
-@app.get("/mcp/{token}")
-async def mcp_connect_get(token: str):
-    """MCP connection endpoint with token in URL path for Puch AI"""
+# NEW: Handle the exact URL-encoded route that Puch AI is requesting
+@app.api_route("/mcp%C2%A0{token}", methods=["GET", "POST"])
+async def mcp_connect_encoded_space(token: str):
+    """Handle MCP connection with URL-encoded non-breaking space issue"""
+    # Clean up any URL encoding and trailing characters
+    clean_token = (token
+                   .replace('%27', '')        # Remove apostrophe
+                   .replace('%C2%A0', '')     # Remove non-breaking space
+                   .replace(' ', '')          # Remove regular space
+                   .strip())
+    
     valid_tokens = ["puch2024", "wingman123"]
-    token_valid = token in valid_tokens
+    token_valid = clean_token in valid_tokens
     
     return {
         "status": "connected" if token_valid else "authentication_failed",
         "server": "ai-wingman-mcp",
         "version": "2.0.0",
-        "token": token,
+        "token": clean_token,
+        "original_token": token,
         "token_valid": token_valid,
         "connection_id": f"conn_{int(time.time())}",
         "capabilities": [
@@ -194,8 +204,55 @@ async def mcp_connect_get(token: str):
             "date_planning"
         ],
         "tools_available": 8,
-        "message": "AI Wingman MCP server connected successfully!" if token_valid else "Invalid authentication token"
+        "message": "AI Wingman MCP connected via encoded space route!" if token_valid else "Invalid authentication token",
+        "debug_info": {
+            "raw_token": token,
+            "cleaned_token": clean_token,
+            "encoding_handled": "non-breaking-space-and-apostrophe"
+        }
     }
+
+# Flexible MCP token handler for various URL patterns
+@app.api_route("/mcp/{token:path}", methods=["GET", "POST"])
+async def mcp_connect_flexible_token(token: str):
+    """Handle MCP connection with flexible token parsing for URL encoding issues"""
+    try:
+        # Decode URL encoding and clean up the token
+        decoded_token = urllib.parse.unquote(token)
+        
+        # Remove common URL encoding artifacts
+        clean_token = (decoded_token
+                      .replace('\u00a0', '')  # Non-breaking space
+                      .replace(' ', '')        # Regular space
+                      .replace("'", '')        # Apostrophe
+                      .strip())
+        
+        valid_tokens = ["puch2024", "wingman123"]
+        token_valid = clean_token in valid_tokens
+        
+        return {
+            "status": "connected" if token_valid else "authentication_failed",
+            "server": "ai-wingman-mcp",
+            "version": "2.0.0",
+            "token": clean_token,
+            "token_valid": token_valid,
+            "connection_id": f"conn_{int(time.time())}",
+            "capabilities": [
+                "bio_generation",
+                "conversation_analysis", 
+                "screenshot_processing",
+                "safety_checking",
+                "date_planning"
+            ],
+            "tools_available": 8,
+            "message": "AI Wingman MCP connected successfully!" if token_valid else "Invalid authentication token"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Token parsing failed: {str(e)}",
+            "raw_token": token
+        }
 
 @app.post("/mcp")
 async def mcp_connect(data: dict = None):
