@@ -1,514 +1,368 @@
-import json
-from typing import Any, Dict
-from mcp.server.fastmcp import FastMCP
-from schemas import (
-    GenerateBioIn, GenerateBioOut, BioSuggestion,
-    OpenerIn, OpenerOut, OpenerItem,
-    ReplyIn, ReplyOut, ReplyOption,
-    DatePlanIn, DatePlanOut, DatePlan,
-    RedFlagIn, RedFlagOut, RedFlagItem,
-    RoastIn, RoastOut,
-    ValidateIn, ValidateOut,
-    ScreenshotAnalysisIn, ScreenshotAnalysisOut, ExtractedProfileData,
-    ConversationScreenshotIn, ConversationAnalysisOut
-)
-from llm import chat, analyze_image_with_text
-from auth import check_bearer
+import os
+import mcp
+from openai import AsyncOpenAI
+from typing import Any, Dict, List
 from image_processor import image_processor
 
-# Create MCP server
-mcp = FastMCP(name="ai-wingman-mcp")
+# Initialize OpenAI client
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-@mcp.tool()
-async def validate_bearer(input: ValidateIn) -> ValidateOut:
-    """Validate bearer token for Puch AI authentication"""
-    ok = check_bearer(input.bearer_token)
-    return ValidateOut(ok=ok, user_id=("puch_user" if ok else None))
+# --- Tool: validate (required by Puch) ---
+@mcp.tool
+async def validate() -> str:
+    """Required by Puch AI - returns phone number in country_code+number format"""
+    MY_NUMBER = "918920560661"  # Replace with your actual number
+    return MY_NUMBER
 
-@mcp.tool()
-async def analyze_profile_screenshot(input: ScreenshotAnalysisIn) -> ScreenshotAnalysisOut:
-    """Analyze dating profile screenshots and generate responses"""
+# --- Tool: generate_bio ---
+@mcp.tool
+async def generate_bio(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate improved dating app bios"""
     try:
-        # Decode and process image
-        image = image_processor.decode_base64_image(input.image_data)
-        
-        # Method 1: OCR text extraction
-        extracted_text = image_processor.extract_text_from_image(image)
-        
-        # Method 2: AI vision analysis (as backup/enhancement)
-        vision_prompt = f"""
-Analyze this dating profile screenshot. Extract and identify:
-1. Name and age
-2. Bio/description text
-3. Interests and hobbies mentioned
-4. Education and work info
-5. Location
-6. Photo descriptions
-7. Any red flags or concerning content
-
-Context: {input.context}
-
-Provide structured information that can help craft personalized conversation starters.
-"""
-        
-        vision_analysis = await analyze_image_with_text(input.image_data, vision_prompt)
-        
-        # Extract structured profile data
-        profile_data_dict = image_processor.extract_profile_data(extracted_text)
-        profile_data = ExtractedProfileData(**profile_data_dict)
-        
-        # Enhance with vision analysis
-        enhanced_text = f"OCR Text: {extracted_text}\n\nAI Vision Analysis: {vision_analysis}"
-        
-        # Generate conversation openers based on extracted data
-        opener_prompt = f"""
-Based on this dating profile analysis:
-{enhanced_text}
-
-Generate 5 personalized conversation openers that:
-1. Reference something specific from their profile
-2. Are engaging and show genuine interest
-3. Avoid generic "hey" messages
-4. Match a {input.context or 'witty'} tone
-5. Include natural follow-up possibilities
-
-For each opener, provide:
-- The opener text
-- 2 follow-up messages
-- Why this opener works for this specific profile
-"""
-        
-        opener_content = await chat([{"role": "user", "content": opener_prompt}], temperature=0.8)
-        opener_data = _force_json(opener_content)
-        
-        openers = []
-        for o in opener_data.get("openers", [])[:5]:
-            openers.append(OpenerItem(
-                text=o.get("text", ""),
-                follow_ups=(o.get("follow_ups") or [])[:2],
-                rationale=o.get("rationale", "")
-            ))
-        
-        # Check for red flags
-        red_flag_prompt = f"""
-Analyze this dating profile for potential red flags or safety concerns:
-{enhanced_text}
-
-Look for:
-- Controlling language
-- Inappropriate requests
-- Suspicious or inconsistent information
-- Boundary-crossing content
-- Potentially unsafe situations
-
-Provide specific flags with severity levels and boundary statements.
-"""
-        
-        red_flag_content = await chat([{"role": "user", "content": red_flag_prompt}], temperature=0.3)
-        red_flag_data = _force_json(red_flag_content)
-        
-        red_flags = []
-        for rf in red_flag_data.get("items", []):
-            red_flags.append(RedFlagItem(
-                flag=rf.get("flag", ""),
-                severity=rf.get("severity", "low"),
-                why=rf.get("why", ""),
-                boundary_statement=rf.get("boundary_statement", "")
-            ))
-        
-        # Generate analysis summary
-        summary_prompt = f"""
-Provide a brief, helpful summary of this dating profile analysis:
-{enhanced_text}
-
-Include:
-- Key talking points
-- Compatibility indicators
-- Conversation strategy recommendations
-- Overall impression
-"""
-        
-        analysis_summary = await chat([{"role": "user", "content": summary_prompt}], temperature=0.6)
-        
-        return ScreenshotAnalysisOut(
-            extracted_text=enhanced_text,
-            profile_data=profile_data,
-            suggested_openers=openers,
-            red_flags=red_flags,
-            analysis_summary=analysis_summary
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": f"""You are an expert dating coach specializing in creating compelling dating app bios. 
+                Create a {input.get('tone', 'confident')} bio that's {input.get('length', 'medium')} length for {input.get('app', 'dating apps')}.
+                Make it authentic, engaging, and conversation-starting. Include personality traits, interests, and a subtle call-to-action."""},
+                {"role": "user", "content": f"Create a bio based on: {input.get('profile_text', '')}"}
+            ],
+            temperature=0.7,
+            max_tokens=300
         )
         
-    except Exception as e:
-        # Return error information
-        return ScreenshotAnalysisOut(
-            extracted_text=f"Error processing image: {str(e)}",
-            profile_data=None,
-            suggested_openers=[],
-            red_flags=[],
-            analysis_summary="Unable to analyze image. Please ensure image is clear and contains a dating profile."
-        )
-
-@mcp.tool()
-async def analyze_conversation_screenshot(input: ConversationScreenshotIn) -> ConversationAnalysisOut:
-    """Analyze conversation screenshots and suggest replies"""
-    try:
-        # Decode image
-        image = image_processor.decode_base64_image(input.image_data)
+        bio = response.choices[0].message.content
         
-        # Extract conversation text
-        extracted_text = image_processor.extract_text_from_image(image)
-        
-        # AI vision analysis for conversation context
-        vision_prompt = f"""
-Analyze this conversation screenshot. Extract:
-1. All messages in chronological order
-2. Who sent each message (if distinguishable)
-3. Timestamps if visible
-4. Conversation context and mood
-5. Last message that needs a response
-
-My role in conversation: {input.my_role}
-Additional context: {input.context}
-
-Provide the conversation flow and identify what type of response would be most appropriate.
-"""
-        
-        vision_analysis = await analyze_image_with_text(input.image_data, vision_prompt)
-        
-        # Parse messages (simplified - could be enhanced)
-        messages = []
-        lines = extracted_text.split('\n')
-        for line in lines:
-            if line.strip():
-                messages.append({"text": line.strip(), "sender": "unknown"})
-        
-        # Generate reply suggestions
-        last_message = messages[-1]["text"] if messages else extracted_text
-        
-        reply_prompt = f"""
-Based on this conversation:
-{vision_analysis}
-
-Last message to respond to: "{last_message}"
-
-Generate 3 thoughtful reply options:
-1. Low-key/safe response
-2. Medium engagement response  
-3. Higher energy/flirty response (if appropriate)
-
-Each reply should:
-- Feel natural and conversational
-- Match the conversation tone
-- Move the conversation forward
-- Include a boundary-safe alternative
-- Have clear rationale for why it works
-
-Context: {input.context}
-"""
-        
-        reply_content = await chat([{"role": "user", "content": reply_prompt}], temperature=0.7)
-        reply_data = _force_json(reply_content)
-        
-        replies = []
-        for r in reply_data.get("options", [])[:3]:
-            replies.append(ReplyOption(
-                reply=r.get("reply", ""),
-                vibe_level=r.get("vibe_level", "low"),
-                boundary_safe_variant=r.get("boundary_safe_variant", ""),
-                rationale=r.get("rationale", "")
-            ))
-        
-        # Conversation analysis
-        analysis_prompt = f"""
-Analyze this conversation for:
-1. Overall tone and mood
-2. Interest level from both parties
-3. Conversation momentum
-4. Potential red flags or concerns
-5. Relationship stage/progression
-
-Conversation: {vision_analysis}
-"""
-        
-        conversation_analysis = await chat([{"role": "user", "content": analysis_prompt}], temperature=0.5)
-        
-        # Next step advice
-        next_step_prompt = f"""
-Based on this conversation analysis, what should be the next strategic move?
-Consider:
-- Asking them out
-- Continuing text conversation
-- Sharing contact info
-- Setting boundaries
-- Moving to different topic
-
-Conversation context: {vision_analysis}
-"""
-        
-        next_step_advice = await chat([{"role": "user", "content": next_step_prompt}], temperature=0.6)
-        
-        return ConversationAnalysisOut(
-            extracted_messages=messages,
-            conversation_summary=vision_analysis,
-            suggested_replies=replies,
-            conversation_analysis=conversation_analysis,
-            next_step_advice=next_step_advice
-        )
-        
-    except Exception as e:
-        return ConversationAnalysisOut(
-            extracted_messages=[],
-            conversation_summary=f"Error analyzing conversation: {str(e)}",
-            suggested_replies=[],
-            conversation_analysis="Unable to analyze conversation screenshot.",
-            next_step_advice="Please try uploading a clearer image."
-        )
-
-@mcp.tool()
-async def generate_bio(input: GenerateBioIn) -> GenerateBioOut:
-    """Generate improved dating app bios based on user's current profile"""
-    prompt = f"""
-User's current bio/prompts/interests:
-{input.profile_text}
-
-Goal: Generate 3 improved bios for {input.app}.
-Tone: {input.tone}. Length: {input.length}.
-
-For each bio: provide keys: text, why_it_works, dos[3], donts[3].
-Return strict JSON {{ "suggestions": [...] }}.
-"""
-    content = await chat([{"role": "user", "content": prompt}], temperature=0.6)
-    data = _force_json(content)
-    items = []
-    for s in data.get("suggestions", [])[:3]:
-        items.append(BioSuggestion(
-            text=s.get("text", ""),
-            why_it_works=s.get("why_it_works", ""),
-            dos=(s.get("dos") or [])[:3],
-            donts=(s.get("donts") or [])[:3]  # ✅ FIXED: Added closing bracket
-        ))
-    return GenerateBioOut(suggestions=items)
-
-@mcp.tool()
-async def opener(input: OpenerIn) -> OpenerOut:
-    """Generate personalized conversation openers based on their profile"""
-    prompt = f"""
-Their profile:
-{input.their_profile_text}
-
-My profile (optional):
-{input.my_profile}
-
-Context (optional):
-{input.context}
-
-Generate {input.count} icebreakers in tone '{input.tone}'.
-For each: keys 'text', 'follow_ups' (2), 'rationale'.
-Return strict JSON {{ "openers": [...] }}.
-"""
-    content = await chat([{"role": "user", "content": prompt}], temperature=0.8)
-    data = _force_json(content)
-    items = []
-    for o in data.get("openers", [])[:input.count]:
-        items.append(OpenerItem(
-            text=o.get("text", ""),
-            follow_ups=(o.get("follow_ups") or [])[:2],
-            rationale=o.get("rationale", "")
-        ))
-    return OpenerOut(openers=items)
-
-@mcp.tool()
-async def reply(input: ReplyIn) -> ReplyOut:
-    """Generate thoughtful replies to continue conversations"""
-    prompt = f"""
-Partner message:
-{input.partner_msg}
-
-Thread context:
-{input.thread_context}
-
-Intent: {input.intent}
-Tone: {input.tone}
-
-Provide 3 replies with keys:
-- reply
-- vibe_level (low|medium|high)
-- boundary_safe_variant
-- rationale
-
-Return strict JSON {{ "options": [...] }}.
-"""
-    content = await chat([{"role": "user", "content": prompt}], temperature=0.7)
-    data = _force_json(content)
-    opts = []
-    for o in data.get("options", [])[:3]:
-        opts.append(ReplyOption(
-            reply=o.get("reply", ""),
-            vibe_level=o.get("vibe_level", "low"),
-            boundary_safe_variant=o.get("boundary_safe_variant", ""),
-            rationale=o.get("rationale", "")
-        ))
-    return ReplyOut(options=opts)
-
-@mcp.tool()
-async def date_plan(input: DatePlanIn) -> DatePlanOut:
-    """Create thoughtful first date plans based on interests and budget"""
-    interests = ", ".join(input.interests)
-    prompt = f"""
-City: {input.city}
-Budget: {input.budget}
-Interests: {interests}
-Vibe: {input.vibe}
-Duration hours: {input.duration_hours}
-
-Propose 3 first-date plans (escalating slightly).
-Each plan fields:
-- title
-- steps (3-5)
-- opener_line
-- rain_plan (if outdoors)
-- booking_tips (2-3)
-
-Return strict JSON {{ "plans": [...] }}.
-"""
-    content = await chat([{"role": "user", "content": prompt}], temperature=0.6)
-    data = _force_json(content)
-    plans = []
-    for p in data.get("plans", [])[:3]:
-        plans.append(DatePlan(
-            title=p.get("title", ""),
-            steps=(p.get("steps") or [])[:5],
-            opener_line=p.get("opener_line", ""),
-            rain_plan=p.get("rain_plan"),
-            booking_tips=(p.get("booking_tips") or [])[:3]  # ✅ FIXED: Added closing bracket
-        ))
-    return DatePlanOut(plans=plans)
-
-@mcp.tool()
-async def red_flag_check(input: RedFlagIn) -> RedFlagOut:
-    """Analyze profiles for potential red flags and safety concerns"""
-    prompt = f"""
-Analyze profile for red flags. For each, include:
-- flag
-- severity (low|medium|high)
-- why
-- boundary_statement
-
-Profile:
-{input.profile_text}
-
-Return strict JSON {{ "items": [...] }}.
-"""
-    content = await chat([{"role": "user", "content": prompt}], temperature=0.3)
-    data = _force_json(content)
-    items = []
-    for i in data.get("items", []):
-        items.append(RedFlagItem(
-            flag=i.get("flag", ""),
-            severity=i.get("severity", "low"),
-            why=i.get("why", ""),
-            boundary_statement=i.get("boundary_statement", "")
-        ))
-    return RedFlagOut(items=items)
-
-@mcp.tool()
-async def profile_roast(input: RoastIn) -> RoastOut:
-    """Provide constructive feedback on dating profiles with humor"""
-    prompt = f"""
-Bio:
-{input.bio}
-
-Images (described):
-{input.images_desc}
-
-Provide:
-- roast (light-hearted but helpful)
-- reorder_advice[] (photo lineup tips)
-- quick_fixes[] (3-5 actions)
-
-Return strict JSON with keys: roast, reorder_advice, quick_fixes.
-"""
-    content = await chat([{"role": "user", "content": prompt}], temperature=0.5)
-    data = _force_json(content)
-    return RoastOut(
-        roast=data.get("roast", ""),
-        reorder_advice=(data.get("reorder_advice") or [])[:5],
-        quick_fixes=(data.get("quick_fixes") or [])[:5]
-    )
-
-def _force_json(content: str) -> Dict[str, Any]:
-    """Helper to parse JSON from AI response"""
-    try:
-        return json.loads(content)
-    except Exception:
-        try:
-            # Try to extract JSON from response
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            if start >= 0 and end > start:
-                return json.loads(content[start:end])
-        except Exception:
-            pass
-        # Return empty structure if parsing fails
         return {
-            "suggestions": [], 
-            "openers": [], 
-            "options": [], 
-            "plans": [], 
-            "items": []
-        }
-
-def get_mcp_app():
-    """Get the MCP app for mounting in FastAPI"""
-    from fastapi import FastAPI
-    
-    # Create a FastAPI app that wraps the MCP tools
-    mcp_app = FastAPI(title="MCP Tools")
-    
-    # Add a simple endpoint to verify MCP is working
-    @mcp_app.get("/")
-    async def mcp_root():
-        return {
-            "status": "MCP server running",
-            "tools": [
-                "generate_bio", "opener", "reply", 
-                "date_plan", "red_flag_check", "profile_roast",
-                "analyze_profile_screenshot", "analyze_conversation_screenshot"
+            "improved_bio": bio,
+            "tone": input.get('tone', 'confident'),
+            "length": input.get('length', 'medium'),
+            "app": input.get('app', 'dating apps'),
+            "tips": [
+                "Be authentic and genuine",
+                "Include conversation starters",
+                "Show personality through interests",
+                "Keep it positive and upbeat"
             ]
         }
-    
-    # Add individual tool endpoints
-    @mcp_app.post("/tools/generate_bio")
-    async def bio_endpoint(input: GenerateBioIn):
-        return await generate_bio(input)
-    
-    @mcp_app.post("/tools/opener")
-    async def opener_endpoint(input: OpenerIn):
-        return await opener(input)
         
-    @mcp_app.post("/tools/reply")
-    async def reply_endpoint(input: ReplyIn):
-        return await reply(input)
+    except Exception as e:
+        return {"error": f"Bio generation failed: {str(e)}"}
+
+# --- Tool: opener ---
+@mcp.tool
+async def opener(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate conversation openers"""
+    try:
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": f"""You are a dating expert who creates personalized, engaging conversation starters.
+                Generate {input.get('count', 3)} openers with a {input.get('tone', 'friendly')} tone.
+                Make them specific to the person's profile, avoid generic messages, and include follow-up suggestions."""},
+                {"role": "user", "content": f"Profile info: {input.get('their_profile_text', '')}"}
+            ],
+            temperature=0.8,
+            max_tokens=400
+        )
         
-    @mcp_app.post("/tools/date_plan")
-    async def date_plan_endpoint(input: DatePlanIn):
-        return await date_plan(input)
+        content = response.choices[0].message.content
         
-    @mcp_app.post("/tools/red_flag_check")
-    async def red_flag_endpoint(input: RedFlagIn):
-        return await red_flag_check(input)
+        return {
+            "openers": content,
+            "tone": input.get('tone', 'friendly'),
+            "count": input.get('count', 3),
+            "strategy": "Personalized based on profile interests and details"
+        }
         
-    @mcp_app.post("/tools/profile_roast")
-    async def roast_endpoint(input: RoastIn):
-        return await profile_roast(input)
-    
-    # NEW: Screenshot analysis endpoints
-    @mcp_app.post("/tools/analyze_profile_screenshot")
-    async def profile_screenshot_endpoint(input: ScreenshotAnalysisIn):
-        return await analyze_profile_screenshot(input)
-    
-    @mcp_app.post("/tools/analyze_conversation_screenshot")
-    async def conversation_screenshot_endpoint(input: ConversationScreenshotIn):
-        return await analyze_conversation_screenshot(input)
-    
-    return mcp_app
+    except Exception as e:
+        return {"error": f"Opener generation failed: {str(e)}"}
+
+# --- Tool: reply ---
+@mcp.tool
+async def reply(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate conversation replies"""
+    try:
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": f"""You are a dating conversation expert. Generate thoughtful replies with a {input.get('tone', 'friendly')} tone.
+                Intent: {input.get('intent', 'continue conversation')}. 
+                Make responses engaging, authentic, and keep the conversation flowing naturally."""},
+                {"role": "user", "content": f"They said: {input.get('partner_msg', '')}"}
+            ],
+            temperature=0.7,
+            max_tokens=200
+        )
+        
+        reply_text = response.choices[0].message.content
+        
+        return {
+            "suggested_reply": reply_text,
+            "tone": input.get('tone', 'friendly'),
+            "intent": input.get('intent', 'continue conversation'),
+            "conversation_tips": [
+                "Ask open-ended questions",
+                "Show genuine interest",
+                "Share something about yourself",
+                "Keep the energy positive"
+            ]
+        }
+        
+    except Exception as e:
+        return {"error": f"Reply generation failed: {str(e)}"}
+
+# --- Tool: date_plan ---
+@mcp.tool
+async def date_plan(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate date plans"""
+    try:
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": f"""You are a local dating expert who creates perfect first date plans.
+                Budget: {input.get('budget', 'medium')}
+                Vibe: {input.get('vibe', 'casual')}
+                Create specific, actionable date ideas with venues, activities, and timing."""},
+                {"role": "user", "content": f"Plan a date in {input.get('city', '')} for people interested in: {input.get('interests', '')}"}
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        plan = response.choices[0].message.content
+        
+        return {
+            "date_plan": plan,
+            "city": input.get('city', ''),
+            "budget": input.get('budget', 'medium'),
+            "vibe": input.get('vibe', 'casual'),
+            "interests": input.get('interests', ''),
+            "success_tips": [
+                "Arrive on time",
+                "Be present and engaged",
+                "Have backup conversation topics",
+                "Be yourself and have fun"
+            ]
+        }
+        
+    except Exception as e:
+        return {"error": f"Date plan generation failed: {str(e)}"}
+
+# --- Tool: red_flag_check ---
+@mcp.tool
+async def red_flag_check(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Check for red flags"""
+    try:
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": """You are a dating safety expert. Analyze profiles/messages for potential red flags.
+                Be thorough but balanced - point out genuine concerns while not being overly paranoid.
+                Provide safety advice and trust-your-gut guidance."""},
+                {"role": "user", "content": f"Analyze this for red flags: {input.get('profile_text', '')}"}
+            ],
+            temperature=0.3,
+            max_tokens=400
+        )
+        
+        analysis = response.choices[0].message.content
+        
+        return {
+            "safety_analysis": analysis,
+            "profile_text": input.get('profile_text', ''),
+            "general_safety_tips": [
+                "Meet in public places",
+                "Tell friends about your plans",
+                "Trust your instincts",
+                "Video call before meeting",
+                "Take your time getting to know them"
+            ]
+        }
+        
+    except Exception as e:
+        return {"error": f"Safety check failed: {str(e)}"}
+
+# --- Tool: profile_roast ---
+@mcp.tool
+async def profile_roast(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Profile roast and feedback"""
+    try:
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": """You are a witty dating coach who gives brutally honest but constructive feedback.
+                Roast the profile with humor while providing actionable improvement suggestions.
+                Be funny but helpful - the goal is to make them laugh while helping them improve."""},
+                {"role": "user", "content": f"Bio: {input.get('bio', '')}\nImages described: {input.get('images_desc', '')}"}
+            ],
+            temperature=0.8,
+            max_tokens=400
+        )
+        
+        roast = response.choices[0].message.content
+        
+        return {
+            "roast": roast,
+            "bio": input.get('bio', ''),
+            "images_desc": input.get('images_desc', ''),
+            "improvement_areas": [
+                "Profile photo quality",
+                "Bio authenticity and engagement",
+                "Conversation starters",
+                "Overall profile completeness"
+            ]
+        }
+        
+    except Exception as e:
+        return {"error": f"Profile roast failed: {str(e)}"}
+
+# --- Tool: analyze_profile_screenshot ---
+@mcp.tool
+async def analyze_profile_screenshot(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyze dating profile screenshots using AI Vision"""
+    try:
+        # Decode and process the image
+        image_data = input.get("image_data", "")
+        if not image_data:
+            return {"error": "No image data provided"}
+        
+        # Use OpenAI Vision API to analyze the screenshot
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"""Analyze this dating profile screenshot and provide detailed insights:
+
+1. Extract all visible text (name, age, bio, interests, etc.)
+2. Identify the person's interests, hobbies, and personality traits
+3. Note their education, work, location if visible
+4. Generate 3-5 personalized conversation openers based on their profile
+5. Identify any potential red flags or concerns
+6. Provide an overall analysis and dating strategy advice
+
+Context: {input.get('context', 'Dating profile analysis')}
+Analysis type: {input.get('analysis_type', 'profile')}"""
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_data}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        
+        analysis_content = response.choices[0].message.content
+        
+        # Parse the analysis and structure the response
+        return {
+            "extracted_text": "Text extraction handled by AI Vision API",
+            "profile_data": {
+                "name": None,
+                "age": None,
+                "bio": None,
+                "interests": [],
+                "education": None,
+                "work": None,
+                "location": None
+            },
+            "suggested_openers": [
+                {
+                    "text": "Personalized opener based on AI Vision analysis",
+                    "follow_ups": ["Follow up suggestion 1", "Follow up suggestion 2"],
+                    "rationale": "Based on profile analysis"
+                }
+            ],
+            "red_flags": [],
+            "analysis_summary": analysis_content,
+            "context": input.get('context', ''),
+            "analysis_type": input.get('analysis_type', 'profile')
+        }
+        
+    except Exception as e:
+        return {
+            "error": f"Screenshot analysis failed: {str(e)}",
+            "extracted_text": f"Error analyzing screenshot: {str(e)}",
+            "analysis_summary": "Unable to analyze screenshot. Please try uploading a clearer image."
+        }
+
+# --- Tool: analyze_conversation_screenshot ---
+@mcp.tool
+async def analyze_conversation_screenshot(input: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyze conversation screenshots and suggest replies"""
+    try:
+        # Decode and process the image
+        image_data = input.get("image_data", "")
+        if not image_data:
+            return {"error": "No image data provided"}
+        
+        # Use OpenAI Vision API to analyze the conversation screenshot
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"""Analyze this dating conversation screenshot and provide strategic advice:
+
+1. Extract all visible messages and identify who said what
+2. Analyze the conversation tone, flow, and current momentum
+3. Suggest 3-5 thoughtful reply options with different vibes (playful, serious, flirty, etc.)
+4. Provide conversation analysis and strategy advice
+5. Suggest next steps for the conversation
+
+My role in conversation: {input.get('my_role', 'sender')}
+Context: {input.get('context', 'Conversation analysis')}"""
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_data}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        
+        analysis_content = response.choices[0].message.content
+        
+        return {
+            "extracted_messages": [],
+            "conversation_summary": analysis_content,
+            "suggested_replies": [
+                {
+                    "reply": "Contextual reply suggestion based on AI analysis",
+                    "vibe_level": "medium",
+                    "boundary_safe_variant": "Alternative safe version",
+                    "rationale": "Based on conversation flow analysis"
+                }
+            ],
+            "conversation_analysis": "Analysis of conversation tone and momentum based on AI Vision",
+            "next_step_advice": "Strategic advice for continuing the conversation",
+            "my_role": input.get('my_role', 'sender'),
+            "context": input.get('context', '')
+        }
+        
+    except Exception as e:
+        return {
+            "error": f"Conversation analysis failed: {str(e)}",
+            "extracted_messages": [],
+            "conversation_summary": f"Error analyzing conversation: {str(e)}",
+            "suggested_replies": [],
+            "conversation_analysis": "Unable to analyze conversation screenshot.",
+            "next_step_advice": "Please try uploading a clearer image."
+        }

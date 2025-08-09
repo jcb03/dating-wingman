@@ -12,7 +12,7 @@ from schemas import (
     ScreenshotAnalysisIn, ConversationScreenshotIn
 )
 from mcp_server import (
-    generate_bio, opener, reply, 
+    validate, generate_bio, opener, reply, 
     date_plan, red_flag_check, profile_roast,
     analyze_profile_screenshot, analyze_conversation_screenshot
 )
@@ -63,10 +63,10 @@ async def root_flexible(data: dict = None):
             ],
             "endpoints": {
                 "health": "/health", "docs": "/docs", "mcp": "/mcp",
-                "mcp_connect": "/mcp/{token}", "generate_bio": "/bio",
-                "opener": "/opener", "reply": "/reply", "date_plan": "/date-plan",
-                "red_flag_check": "/safety", "profile_roast": "/roast",
-                "profile_screenshot": "/analyze-profile",
+                "validate": "/validate", "mcp_connect": "/mcp/{token}", 
+                "generate_bio": "/bio", "opener": "/opener", "reply": "/reply", 
+                "date_plan": "/date-plan", "red_flag_check": "/safety", 
+                "profile_roast": "/roast", "profile_screenshot": "/analyze-profile",
                 "conversation_screenshot": "/analyze-conversation"
             },
             "integration": "Ready for Puch AI MCP integration",
@@ -100,6 +100,17 @@ async def health():
         "version": "2.0.0"
     }
 
+# NEW: Required validate endpoint for Puch AI
+@app.get("/validate")
+async def validate_endpoint():
+    """Required by Puch AI - validate phone number"""
+    try:
+        result = await validate()
+        return {"phone_number": result}
+    except Exception as e:
+        print(f"Validate error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
+
 # MCP Protocol Endpoints for Puch AI Integration
 @app.get("/mcp")
 async def mcp_info():
@@ -111,6 +122,13 @@ async def mcp_info():
         "server_url": "https://dating-wingman.onrender.com",
         "protocol": "mcp",
         "tools": [
+            {
+                "name": "validate",
+                "description": "Required by Puch AI - validate phone number",
+                "endpoint": "/validate",
+                "method": "GET",
+                "parameters": []
+            },
             {
                 "name": "generate_bio",
                 "description": "Generate improved dating app bios based on user interests and personality",
@@ -174,7 +192,7 @@ async def mcp_info():
         }
     }
 
-# NEW: Handle the exact URL-encoded route that Puch AI is requesting
+# Handle the exact URL-encoded route that Puch AI is requesting
 @app.api_route("/mcp%C2%A0{token}", methods=["GET", "POST"])
 async def mcp_connect_encoded_space(token: str):
     """Handle MCP connection with URL-encoded non-breaking space issue"""
@@ -203,13 +221,51 @@ async def mcp_connect_encoded_space(token: str):
             "safety_checking",
             "date_planning"
         ],
-        "tools_available": 8,
-        "message": "AI Wingman MCP connected via encoded space route!" if token_valid else "Invalid authentication token",
-        "debug_info": {
-            "raw_token": token,
-            "cleaned_token": clean_token,
-            "encoding_handled": "non-breaking-space-and-apostrophe"
-        }
+        "tools_available": 9,
+        "message": "AI Wingman MCP connected via encoded space route!" if token_valid else "Invalid authentication token"
+    }
+
+# Exact POST route handler for Puch AI
+@app.post("/mcp%C2%A0puch2024")
+async def mcp_connect_exact_encoded_post():
+    """Handle exact POST request to /mcp%C2%A0puch2024"""
+    return {
+        "status": "connected",
+        "server": "ai-wingman-mcp",
+        "version": "2.0.0",
+        "token": "puch2024",
+        "token_valid": True,
+        "connection_id": f"conn_{int(time.time())}",
+        "capabilities": [
+            "bio_generation",
+            "conversation_analysis", 
+            "screenshot_processing",
+            "safety_checking",
+            "date_planning"
+        ],
+        "tools_available": 9,
+        "message": "AI Wingman MCP connected via exact POST route!"
+    }
+
+@app.get("/mcp%C2%A0puch2024%27")
+async def mcp_connect_exact_encoded_get_with_apostrophe():
+    """Handle exact GET request to /mcp%C2%A0puch2024' (with apostrophe)"""
+    return {
+        "status": "connected",
+        "server": "ai-wingman-mcp",
+        "version": "2.0.0",
+        "token": "puch2024",
+        "token_valid": True,
+        "connection_id": f"conn_{int(time.time())}",
+        "capabilities": [
+            "bio_generation",
+            "conversation_analysis", 
+            "screenshot_processing",
+            "safety_checking",
+            "date_planning"
+        ],
+        "tools_available": 9,
+        "message": "AI Wingman MCP connected via exact GET route with apostrophe!"
     }
 
 # Flexible MCP token handler for various URL patterns
@@ -244,7 +300,7 @@ async def mcp_connect_flexible_token(token: str):
                 "safety_checking",
                 "date_planning"
             ],
-            "tools_available": 8,
+            "tools_available": 9,
             "message": "AI Wingman MCP connected successfully!" if token_valid else "Invalid authentication token"
         }
     except Exception as e:
@@ -292,7 +348,7 @@ async def mcp_connect(data: dict = None):
 async def bio_endpoint(input: GenerateBioIn):
     """Generate improved dating app bios"""
     try:
-        result = await generate_bio(input)
+        result = await generate_bio(input.dict())
         return result
     except Exception as e:
         print(f"Bio generation error: {str(e)}")
@@ -302,7 +358,7 @@ async def bio_endpoint(input: GenerateBioIn):
 async def opener_endpoint(input: OpenerIn):
     """Generate conversation openers"""
     try:
-        result = await opener(input)
+        result = await opener(input.dict())
         return result
     except Exception as e:
         print(f"Opener generation error: {str(e)}")
@@ -312,7 +368,7 @@ async def opener_endpoint(input: OpenerIn):
 async def reply_endpoint(input: ReplyIn):
     """Generate conversation replies"""
     try:
-        result = await reply(input)
+        result = await reply(input.dict())
         return result
     except Exception as e:
         print(f"Reply generation error: {str(e)}")
@@ -322,7 +378,7 @@ async def reply_endpoint(input: ReplyIn):
 async def date_plan_endpoint(input: DatePlanIn):
     """Generate date plans"""
     try:
-        result = await date_plan(input)
+        result = await date_plan(input.dict())
         return result
     except Exception as e:
         print(f"Date plan generation error: {str(e)}")
@@ -332,7 +388,7 @@ async def date_plan_endpoint(input: DatePlanIn):
 async def safety_endpoint(input: RedFlagIn):
     """Check for red flags"""
     try:
-        result = await red_flag_check(input)
+        result = await red_flag_check(input.dict())
         return result
     except Exception as e:
         print(f"Safety check error: {str(e)}")
@@ -342,7 +398,7 @@ async def safety_endpoint(input: RedFlagIn):
 async def roast_endpoint(input: RoastIn):
     """Profile roast and feedback"""
     try:
-        result = await profile_roast(input)
+        result = await profile_roast(input.dict())
         return result
     except Exception as e:
         print(f"Profile roast error: {str(e)}")
@@ -353,7 +409,7 @@ async def roast_endpoint(input: RoastIn):
 async def analyze_profile_endpoint(input: ScreenshotAnalysisIn):
     """Analyze dating profile screenshots and generate openers"""
     try:
-        result = await analyze_profile_screenshot(input)
+        result = await analyze_profile_screenshot(input.dict())
         return result
     except Exception as e:
         print(f"Profile screenshot analysis error: {str(e)}")
@@ -363,7 +419,7 @@ async def analyze_profile_endpoint(input: ScreenshotAnalysisIn):
 async def analyze_conversation_endpoint(input: ConversationScreenshotIn):
     """Analyze conversation screenshots and suggest replies"""
     try:
-        result = await analyze_conversation_screenshot(input)
+        result = await analyze_conversation_screenshot(input.dict())
         return result
     except Exception as e:
         print(f"Conversation screenshot analysis error: {str(e)}")
@@ -377,6 +433,7 @@ async def status():
         "server_status": "running",
         "ai_model": os.getenv("OPENAI_MODEL", "gpt-4o"),
         "features_enabled": [
+            "phone_validation",
             "bio_generation",
             "conversation_openers", 
             "reply_suggestions",
@@ -395,6 +452,12 @@ async def list_tools():
     """List all available AI wingman tools"""
     return {
         "tools": [
+            {
+                "name": "validate",
+                "endpoint": "/validate",
+                "description": "Required by Puch AI - validate phone number",
+                "input": "none"
+            },
             {
                 "name": "generate_bio",
                 "endpoint": "/bio",
