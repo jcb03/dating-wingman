@@ -17,7 +17,7 @@ from mcp_server import (
 )
 
 load_dotenv()
-APP_NAME = os.getenv("APP_NAME", "Dating Wingman")
+APP_NAME = os.getenv("APP_NAME", "AI Wingman MCP")
 
 app = FastAPI(
     title="AI Wingman MCP Server", 
@@ -65,6 +65,7 @@ async def root():
         "endpoints": {
             "health": "/health",
             "docs": "/docs",
+            "mcp": "/mcp",
             "generate_bio": "/bio",
             "opener": "/opener", 
             "reply": "/reply",
@@ -89,6 +90,113 @@ async def health():
         "timestamp": datetime.now().isoformat(),
         "version": "2.0.0"
     }
+
+# NEW: MCP Protocol Endpoints for Puch AI Integration
+@app.get("/mcp")
+async def mcp_info():
+    """MCP server information for Puch AI discovery"""
+    return {
+        "name": "ai-wingman-mcp",
+        "version": "2.0.0",
+        "description": "AI Wingman for dating app assistance with screenshot analysis",
+        "server_url": "https://dating-wingman.onrender.com",
+        "protocol": "mcp",
+        "tools": [
+            {
+                "name": "generate_bio",
+                "description": "Generate improved dating app bios based on user interests and personality",
+                "endpoint": "/bio",
+                "method": "POST",
+                "parameters": ["profile_text", "tone", "length", "app"]
+            },
+            {
+                "name": "opener",
+                "description": "Generate personalized conversation openers based on profile analysis", 
+                "endpoint": "/opener",
+                "method": "POST",
+                "parameters": ["their_profile_text", "tone", "count"]
+            },
+            {
+                "name": "reply",
+                "description": "Generate thoughtful conversation replies to continue conversations",
+                "endpoint": "/reply",
+                "method": "POST",
+                "parameters": ["partner_msg", "intent", "tone"]
+            },
+            {
+                "name": "date_plan",
+                "description": "Generate personalized first date plans based on location and interests",
+                "endpoint": "/date-plan",
+                "method": "POST",
+                "parameters": ["city", "budget", "interests", "vibe"]
+            },
+            {
+                "name": "red_flag_check",
+                "description": "Analyze profiles for potential red flags and safety concerns",
+                "endpoint": "/safety",
+                "method": "POST",
+                "parameters": ["profile_text"]
+            },
+            {
+                "name": "profile_roast",
+                "description": "Provide constructive feedback on dating profiles with humor",
+                "endpoint": "/roast",
+                "method": "POST",
+                "parameters": ["bio", "images_desc"]
+            },
+            {
+                "name": "analyze_profile_screenshot",
+                "description": "Analyze dating profile screenshots using AI Vision and generate personalized openers",
+                "endpoint": "/analyze-profile",
+                "method": "POST",
+                "parameters": ["image_data", "analysis_type", "context"]
+            },
+            {
+                "name": "analyze_conversation_screenshot",
+                "description": "Analyze conversation screenshots and suggest intelligent replies", 
+                "endpoint": "/analyze-conversation",
+                "method": "POST",
+                "parameters": ["image_data", "my_role", "context"]
+            }
+        ],
+        "authentication": {
+            "type": "bearer_token",
+            "valid_tokens": ["puch2024", "wingman123"]
+        }
+    }
+
+@app.post("/mcp")
+async def mcp_connect(data: dict = None):
+    """MCP connection endpoint for Puch AI authentication"""
+    try:
+        token = None
+        if data and isinstance(data, dict):
+            token = data.get("token") or data.get("bearer_token")
+        
+        # Check if token is valid
+        valid_tokens = ["puch2024", "wingman123"]
+        token_valid = token in valid_tokens if token else False
+        
+        return {
+            "status": "connected" if token_valid else "authentication_required",
+            "server": "ai-wingman-mcp",
+            "version": "2.0.0",
+            "token_valid": token_valid,
+            "connection_id": f"conn_{int(time.time())}",
+            "capabilities": [
+                "bio_generation",
+                "conversation_analysis", 
+                "screenshot_processing",
+                "safety_checking",
+                "date_planning"
+            ],
+            "message": "AI Wingman MCP server ready for dating assistance" if token_valid else "Please provide valid bearer token"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Connection failed: {str(e)}"
+        }
 
 # Core dating wingman endpoints
 @app.post("/bio")
@@ -189,7 +297,8 @@ async def status():
             "screenshot_analysis"
         ],
         "integration_ready": True,
-        "puch_ai_compatible": True
+        "puch_ai_compatible": True,
+        "mcp_protocol": "enabled"
     }
 
 @app.get("/tools")
