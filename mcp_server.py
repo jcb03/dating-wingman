@@ -8,14 +8,12 @@ from image_processor import image_processor
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # --- Tool: validate (required by Puch) ---
-@mcp.tool
 async def validate() -> str:
     """Required by Puch AI - returns phone number in country_code+number format"""
     MY_NUMBER = "918920560661"  # Replace with your actual number
     return MY_NUMBER
 
 # --- Tool: generate_bio ---
-@mcp.tool
 async def generate_bio(input: Dict[str, Any]) -> Dict[str, Any]:
     """Generate improved dating app bios"""
     try:
@@ -50,7 +48,6 @@ async def generate_bio(input: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"Bio generation failed: {str(e)}"}
 
 # --- Tool: opener ---
-@mcp.tool
 async def opener(input: Dict[str, Any]) -> Dict[str, Any]:
     """Generate conversation openers"""
     try:
@@ -79,7 +76,6 @@ async def opener(input: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"Opener generation failed: {str(e)}"}
 
 # --- Tool: reply ---
-@mcp.tool
 async def reply(input: Dict[str, Any]) -> Dict[str, Any]:
     """Generate conversation replies"""
     try:
@@ -113,7 +109,6 @@ async def reply(input: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"Reply generation failed: {str(e)}"}
 
 # --- Tool: date_plan ---
-@mcp.tool
 async def date_plan(input: Dict[str, Any]) -> Dict[str, Any]:
     """Generate date plans"""
     try:
@@ -150,7 +145,6 @@ async def date_plan(input: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"Date plan generation failed: {str(e)}"}
 
 # --- Tool: red_flag_check ---
-@mcp.tool
 async def red_flag_check(input: Dict[str, Any]) -> Dict[str, Any]:
     """Check for red flags"""
     try:
@@ -184,7 +178,6 @@ async def red_flag_check(input: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"Safety check failed: {str(e)}"}
 
 # --- Tool: profile_roast ---
-@mcp.tool
 async def profile_roast(input: Dict[str, Any]) -> Dict[str, Any]:
     """Profile roast and feedback"""
     try:
@@ -218,7 +211,6 @@ async def profile_roast(input: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"Profile roast failed: {str(e)}"}
 
 # --- Tool: analyze_profile_screenshot ---
-@mcp.tool
 async def analyze_profile_screenshot(input: Dict[str, Any]) -> Dict[str, Any]:
     """Analyze dating profile screenshots using AI Vision"""
     try:
@@ -296,7 +288,6 @@ Analysis type: {input.get('analysis_type', 'profile')}"""
         }
 
 # --- Tool: analyze_conversation_screenshot ---
-@mcp.tool
 async def analyze_conversation_screenshot(input: Dict[str, Any]) -> Dict[str, Any]:
     """Analyze conversation screenshots and suggest replies"""
     try:
