@@ -1,5 +1,6 @@
-fastmcp==0.2.1
-openai==1.40.1
-python-dotenv==1.0.1
-pillow==10.4.0
-numpy==1.26.4
+fastmcp
+openai>=1.40.1
+python-dotenv>=1.0.1
+pillow>=10.4.0
+numpy>=1.26.4
+pydantic>=2.10.1
