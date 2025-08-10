@@ -1,70 +1,105 @@
 import os
-from typing import List, Dict, Optional
-from dotenv import load_dotenv
+from typing import Optional, Dict, Any
 from openai import AsyncOpenAI
-import base64
+from dotenv import load_dotenv
 
-# Load .env BEFORE reading environment variables
 load_dotenv()
 
-# Check if API key is loaded
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    raise RuntimeError("OPENAI_API_KEY is not set. Make sure .env file exists and contains the API key.")
-
-client = AsyncOpenAI(api_key=api_key)
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # Use gpt-4o for vision capabilities
-
-SYSTEM = """You are a respectful, ethical AI wingman.
-- Keep language friendly, playful, and non-manipulative.
-- Do not produce explicit content or harassment.
-- Encourage consent, safety, and clear boundaries.
-- Be culturally aware and adaptable for Gen Z.
-- Keep outputs WhatsApp-friendly (short paragraphs, bullets when needed).
-"""
-
-async def chat(messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
-    """Standard text-only chat"""
-    resp = await client.chat.completions.create(
-        model=OPENAI_MODEL,
-        temperature=temperature,
-        messages=[{"role": "system", "content": SYSTEM}] + messages,
-    )
-    return resp.choices[0].message.content
-
-async def analyze_image_with_text(image_base64: str, prompt: str, temperature: float = 0.7) -> str:
-    """Analyze image with vision model"""
-    try:
-        # Ensure we're using a vision-capable model
-        vision_model = "gpt-4o" if "gpt-4" in OPENAI_MODEL else "gpt-4o"
-        
-        messages = [
-            {"role": "system", "content": SYSTEM},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
+class LLMClient:
+    """OpenAI LLM client for AI Wingman"""
+    
+    def __init__(self):
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    
+    async def generate_response(
+        self, 
+        prompt: str,
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+        system_message: Optional[str] = None
+    ) -> str:
+        """Generate a text response using OpenAI"""
+        try:
+            messages = []
+            
+            if system_message:
+                messages.append({"role": "system", "content": system_message})
+            
+            messages.append({"role": "user", "content": prompt})
+            
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            raise Exception(f"LLM generation failed: {str(e)}")
+    
+    async def analyze_image(
+        self, 
+        image_data: str, 
+        prompt: str,
+        max_tokens: int = 1000,
+        temperature: float = 0.7
+    ) -> str:
+        """Analyze an image using OpenAI Vision API"""
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o",  # Vision model
+                messages=[
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}",
-                            "detail": "high"
-                        }
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_data}"
+                                }
+                            }
+                        ]
                     }
-                ]
-            }
-        ]
-        
-        resp = await client.chat.completions.create(
-            model=vision_model,
-            temperature=temperature,
-            messages=messages,
-            max_tokens=1000
-        )
-        
-        return resp.choices[0].message.content
-        
-    except Exception as e:
-        # Fallback to text-only analysis if vision fails
-        fallback_prompt = f"{prompt}\n\nNote: Image analysis failed, please provide text description: {str(e)}"
-        return await chat([{"role": "user", "content": fallback_prompt}], temperature)
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            raise Exception(f"Image analysis failed: {str(e)}")
+    
+    async def generate_structured_response(
+        self, 
+        prompt: str,
+        response_format: Dict[str, Any],
+        max_tokens: int = 500,
+        temperature: float = 0.7
+    ) -> Dict[str, Any]:
+        """Generate a structured response using OpenAI with response format"""
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=response_format
+            )
+            
+            import json
+            return json.loads(response.choices[0].message.content)
+            
+        except Exception as e:
+            # Fallback to regular text generation
+            text_response = await self.generate_response(prompt, max_tokens, temperature)
+            return {"content": text_response}
